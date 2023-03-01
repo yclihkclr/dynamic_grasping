@@ -1,0 +1,4 @@
+float64[] poses
+float64 duration
+---
+bool success

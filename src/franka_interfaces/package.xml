@@ -5,11 +5,7 @@
   <version>0.0.0</version>
   <description>TODO: Package description</description>
   <maintainer email="ycli@hkclr.hk">hkclr</maintainer>
-<<<<<<< HEAD
   <license>Apache License 2.0</license>
-=======
-  <license>TODO: License declaration</license>
->>>>>>> 33994516c9e18c65880689f1e064c03fd2d2679e
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 

@@ -1,0 +1,8 @@
+bool enable
+float64 target_width
+float64 speed
+float64 force
+float64 epsilon_inner
+float64 epsilon_outer
+---
+bool success

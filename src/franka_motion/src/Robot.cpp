@@ -36,11 +36,11 @@ void Robot::close_gripper(double width, double speed, double force, double epsil
 epsilon_outer
 Maximum tolerated deviation when the actual grasped width is larger than the commanded grasp width.
      */
-    gripper.grasp(width, speed, force, epsilon_width, epsilon_width);
+    gripper->grasp(width, speed, force, epsilon_width, epsilon_width);
 }
 
 void Robot::open_gripper(double speed, double width) {
-    gripper.move(width, speed);
+    gripper->move(width, speed);
 }
 
 void Robot::wait_milliseconds(int milliseconds) {
@@ -64,11 +64,13 @@ bool Robot::recoverFromErrors() {
     return !hasErrors();
 }
 
-Robot::Robot(const std::string &robot_name) : robot(robot_name), gripper(robot_name), model(robot.loadModel()) {
-    robot.setGuidingMode({true, true, true, true, true, true}, false);
-    robot.automaticErrorRecovery();
+Robot::Robot(const std::string &robot_name, bool use_franka_hand):robot(robot_name), model(robot.loadModel()) {
+    if(use_franka_hand)
+    {
+        gripper = std::make_shared<franka::Gripper>(robot_name);
+    }
 
-
+    recoverFromErrors();
     // Set additional parameters always before the control loop, NEVER in the control loop!
     // Set collision behavior.
     setDefaultBehavior();
@@ -325,7 +327,7 @@ void Robot::move_circle(const Position &center, double rotation_angle, double ma
 }
 
 franka::Gripper &Robot::get_franka_gripper() {
-    return gripper;
+    return *gripper;
 }
 
 void Robot::double_tap_robot_to_continue() {

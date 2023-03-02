@@ -11,11 +11,18 @@ void spin(std::shared_ptr<rclcpp::executors::MultiThreadedExecutor> exe)
 
 int main(int argc, char** argv) {
 
+    //set use_franka_hand or not
+    bool use_franka_hand = true;
 
     // Init ROS node
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("franka_server_node");
-    auto server = std::make_shared<RobotServer>(node);
+
+    node->declare_parameter<bool>("hand", 1);
+    node->get_parameter<bool>("hand", use_franka_hand);
+    RCLCPP_INFO(node->get_logger(), "use_franka_hand = %d", use_franka_hand);
+
+    auto server = std::make_shared<RobotServer>(node,use_franka_hand);
 
     rclcpp::executor::ExecutorArgs arg;
     auto executor = std::make_shared<rclcpp::executors::MultiThreadedExecutor>(arg, 2);

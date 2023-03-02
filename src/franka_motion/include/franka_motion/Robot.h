@@ -31,7 +31,7 @@ namespace orl {
          * Establishes a connection to the Franka robot and sets collision and force thresholds
          * @param robot_name name or IP of the Franka robot
          */
-        explicit Robot(const std::string &robot_name);
+        explicit Robot(const std::string &robot_name, bool use_franka_hand = true);
 
         /**
          * gets the current End-Effector Pose
@@ -296,7 +296,7 @@ namespace orl {
          * franka::Gripper instance
          * Use get_franka_gripper() to get it
          */
-        franka::Gripper gripper;
+        std::shared_ptr<franka::Gripper> gripper;
 
         /**
          * franka::Model instance

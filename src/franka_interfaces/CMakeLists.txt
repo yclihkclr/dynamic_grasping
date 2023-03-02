@@ -24,7 +24,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/CartMotionTime.srv"
   "srv/JointMotionVel.srv"
   "srv/PosePath.srv"
+<<<<<<< HEAD
   "srv/FrankaHand.srv"
+=======
+>>>>>>> 33994516c9e18c65880689f1e064c03fd2d2679e
   DEPENDENCIES geometry_msgs # Add packages that above messages depend on, in this case geometry_msgs for Sphere.msg
 )
 

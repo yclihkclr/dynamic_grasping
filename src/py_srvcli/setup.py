@@ -14,13 +14,14 @@ setup(
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='hkclr',
-    maintainer_email='szzhu@hkclr.hk',
+    maintainer_email='ycli@hkclr.hk',
     description='TODO: Package description',
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
         'test_franka_motion_server = py_srvcli.test_franka_motion_server:main',
+        'test_franka_motion_server_vision = py_srvcli.test_franka_motion_server_vision:main',
         ],
     },
 )

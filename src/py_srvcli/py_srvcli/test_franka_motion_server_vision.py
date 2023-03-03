@@ -1,0 +1,400 @@
+import sys
+
+from franka_interfaces.srv import CartMotionTime
+from franka_interfaces.srv import JointMotionVel
+from franka_interfaces.srv import PosePath
+from franka_interfaces.srv import FrankaHand
+import rclpy
+from rclpy.node import Node
+import transform
+
+import random
+from utils.torch_utils import select_device, load_classifier, time_sync
+from utils.general import (
+    check_img_size, non_max_suppression, apply_classifier, scale_coords,
+    xyxy2xywh, strip_optimizer, set_logging)
+from utils.datasets import LoadStreams, LoadImages, letterbox
+from models.experimental import attempt_load
+import torch.backends.cudnn as cudnn
+import torch
+
+import pyrealsense2 as rs
+import math
+import yaml
+import argparse
+import os
+import time
+import numpy as np
+import sys
+import cv2
+
+pipeline = rs.pipeline()  # 定义流程pipeline
+config = rs.config()  # 定义配置config
+config.enable_stream(rs.stream.depth, 848, 480, rs.format.z16, 30)
+config.enable_stream(rs.stream.color, 848, 480, rs.format.bgr8, 30)
+profile = pipeline.start(config)  # 流程开始
+align_to = rs.stream.color  # 与color流对齐
+align = rs.align(align_to)
+
+
+def get_aligned_images():
+    frames = pipeline.wait_for_frames()  # 等待获取图像帧
+    aligned_frames = align.process(frames)  # 获取对齐帧
+    aligned_depth_frame = aligned_frames.get_depth_frame()  # 获取对齐帧中的depth帧
+    color_frame = aligned_frames.get_color_frame()  # 获取对齐帧中的color帧
+
+    ############### 相机参数的获取 #######################
+    intr = color_frame.profile.as_video_stream_profile().intrinsics  # 获取相机内参
+    depth_intrin = aligned_depth_frame.profile.as_video_stream_profile(
+    ).intrinsics  # 获取深度参数（像素坐标系转相机坐标系会用到）
+    '''camera_parameters = {'fx': intr.fx, 'fy': intr.fy,
+                         'ppx': intr.ppx, 'ppy': intr.ppy,
+                         'height': intr.height, 'width': intr.width,
+                         'depth_scale': profile.get_device().first_depth_sensor().get_depth_scale()
+                         }'''
+
+    # 保存内参到本地
+    # with open('./intrinsics.json', 'w') as fp:
+    #json.dump(camera_parameters, fp)
+    #######################################################
+
+    depth_image = np.asanyarray(aligned_depth_frame.get_data())  # 深度图（默认16位）
+    depth_image_8bit = cv2.convertScaleAbs(depth_image, alpha=0.03)  # 深度图（8位）
+    depth_image_3d = np.dstack(
+        (depth_image_8bit, depth_image_8bit, depth_image_8bit))  # 3通道深度图
+    color_image = np.asanyarray(color_frame.get_data())  # RGB图
+
+    # 返回相机内参、深度参数、彩色图、深度图、齐帧中的depth帧
+    return intr, depth_intrin, color_image, depth_image, aligned_depth_frame
+
+class YoloV5:
+    def __init__(self, yolov5_yaml_path='config/yolov5s.yaml'):
+        '''初始化'''
+        # 载入配置文件
+        with open(yolov5_yaml_path, 'r', encoding='utf-8') as f:
+            self.yolov5 = yaml.load(f.read(), Loader=yaml.SafeLoader)
+        # 随机生成每个类别的颜色
+        self.colors = [[np.random.randint(0, 255) for _ in range(
+            3)] for class_id in range(self.yolov5['class_num'])]
+        # 模型初始化
+        self.init_model()
+
+    @torch.no_grad()
+    def init_model(self):
+        '''模型初始化'''
+        # 设置日志输出
+        set_logging()
+        # 选择计算设备
+        device = select_device(self.yolov5['device'])
+        # 如果是GPU则使用半精度浮点数 F16
+        is_half = device.type != 'cpu'
+        # 载入模型
+        model = attempt_load(
+            self.yolov5['weight'], map_location=device)  # 载入全精度浮点数的模型
+        input_size = check_img_size(
+            self.yolov5['input_size'], s=model.stride.max())  # 检查模型的尺寸
+        if is_half:
+            model.half()  # 将模型转换为半精度
+        # 设置BenchMark，加速固定图像的尺寸的推理
+        cudnn.benchmark = True  # set True to speed up constant image size inference
+        # 图像缓冲区初始化
+        img_torch = torch.zeros(
+            (1, 3, self.yolov5['input_size'], self.yolov5['input_size']), device=device)  # init img
+        # 创建模型
+        # run once
+        _ = model(img_torch.half()
+                  if is_half else img) if device.type != 'cpu' else None
+        self.is_half = is_half  # 是否开启半精度
+        self.device = device  # 计算设备
+        self.model = model  # Yolov5模型
+        self.img_torch = img_torch  # 图像缓冲区
+
+    def preprocessing(self, img):
+        '''图像预处理'''
+        # 图像缩放
+        # 注: auto一定要设置为False -> 图像的宽高不同
+        img_resize = letterbox(img, new_shape=(
+            self.yolov5['input_size'], self.yolov5['input_size']), auto=False)[0]
+        # print("img resize shape: {}".format(img_resize.shape))
+        # 增加一个维度
+        img_arr = np.stack([img_resize], 0)
+        # 图像转换 (Convert) BGR格式转换为RGB
+        # 转换为 bs x 3 x 416 x
+        # 0(图像i), 1(row行), 2(列), 3(RGB三通道)
+        # ---> 0, 3, 1, 2
+        # BGR to RGB, to bsx3x416x416
+        img_arr = img_arr[:, :, :, ::-1].transpose(0, 3, 1, 2)
+        # 数值归一化
+        # img_arr =  img_arr.astype(np.float32) / 255.0
+        # 将数组在内存的存放地址变成连续的(一维)， 行优先
+        # 将一个内存不连续存储的数组转换为内存连续存储的数组，使得运行速度更快
+        # https://zhuanlan.zhihu.com/p/59767914
+        img_arr = np.ascontiguousarray(img_arr)
+        return img_arr
+
+    @torch.no_grad()
+    def detect(self, img, canvas=None, view_img=True):
+        '''模型预测'''
+        # 图像预处理
+        img_resize = self.preprocessing(img)  # 图像缩放
+        self.img_torch = torch.from_numpy(img_resize).to(self.device)  # 图像格式转换
+        self.img_torch = self.img_torch.half(
+        ) if self.is_half else self.img_torch.float()  # 格式转换 uint8-> 浮点数
+        self.img_torch /= 255.0  # 图像归一化
+        if self.img_torch.ndimension() == 3:
+            self.img_torch = self.img_torch.unsqueeze(0)
+        # 模型推理
+        t1 = time_sync()
+        pred = self.model(self.img_torch, augment=False)[0]
+        # pred = self.model_trt(self.img_torch, augment=False)[0]
+        # NMS 非极大值抑制
+        pred = non_max_suppression(pred, self.yolov5['threshold']['confidence'],
+                                   self.yolov5['threshold']['iou'], classes=None, agnostic=False)
+        t2 = time_sync()
+        # print("推理时间: inference period = {}".format(t2 - t1))
+        # 获取检测结果
+        det = pred[0]
+        gain_whwh = torch.tensor(img.shape)[[1, 0, 1, 0]]  # [w, h, w, h]
+
+        if view_img and canvas is None:
+            canvas = np.copy(img)
+        xyxy_list = []
+        conf_list = []
+        class_id_list = []
+        if det is not None and len(det):
+            # 画面中存在目标对象
+            # 将坐标信息恢复到原始图像的尺寸
+            det[:, :4] = scale_coords(
+                img_resize.shape[2:], det[:, :4], img.shape).round()
+            for *xyxy, conf, class_id in reversed(det):
+                class_id = int(class_id)
+                xyxy_list.append(xyxy)
+                conf_list.append(conf)
+                class_id_list.append(class_id)
+                if view_img:
+                    # 绘制矩形框与标签
+                    label = '%s %.2f' % (
+                        self.yolov5['class_name'][class_id], conf)
+                    self.plot_one_box(
+                        xyxy, canvas, label=label, color=self.colors[class_id], line_thickness=3)
+        return canvas, class_id_list, xyxy_list, conf_list
+
+    def plot_one_box(self, x, img, color=None, label=None, line_thickness=None):
+        ''''绘制矩形框+标签'''
+        tl = line_thickness or round(
+            0.002 * (img.shape[0] + img.shape[1]) / 2) + 1  # line/font thickness
+        color = color or [random.randint(0, 255) for _ in range(3)]
+        c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
+        cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
+        if label:
+            tf = max(tl - 1, 1)  # font thickness
+            t_size = cv2.getTextSize(
+                label, 0, fontScale=tl / 3, thickness=tf)[0]
+            c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
+            cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)  # filled
+            cv2.putText(img, label, (c1[0], c1[1] - 2), 0, tl / 3,
+                        [225, 255, 255], thickness=tf, lineType=cv2.LINE_AA)
+
+class MinimalClientAsync(Node):
+
+    def __init__(self):
+        super().__init__('minimal_client_async')
+        self.hand_eye= [[-0.00818685,  0.991227, -0.131914, 0.611423],
+                       [0.999931, 0.00699775, -0.0094753 ,  -0.0206352],
+                       [-0.00846908 ,  -0.131982,  -0.991216,  0.591267],
+                       [ 0.        ,  0.        ,  0.        ,  1.        ]]
+
+        self.model = YoloV5(yolov5_yaml_path='src/py_srvcli/py_srvcli/yolov5_detect/config/yolov5s.yaml')
+
+        self.cart_cli = self.create_client(CartMotionTime, '/franka_motion/cart_motion_time')
+        while not self.cart_cli.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('service not available, waiting again...')
+
+        self.joint_cli = self.create_client(JointMotionVel, '/franka_motion/joint_motion_vel')
+        while not self.joint_cli.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('service not available, waiting again...')
+
+        self.posePath_cli = self.create_client(PosePath, '/franka_motion/pose_path')
+        while not self.posePath_cli.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('service not available, waiting again...')
+
+        self.frankaHand_cli = self.create_client(FrankaHand, '/franka_motion/franka_hand')
+        while not self.frankaHand_cli.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('service not available, waiting again...')
+
+    def detect_once(self,show_result = True):
+    # Wait for a coherent pair of frames: depth and color
+        intr, depth_intrin, color_image, depth_image, aligned_depth_frame = get_aligned_images()  # 获取对齐的图像与相机内参
+        while not depth_image.any() or not color_image.any():
+            intr, depth_intrin, color_image, depth_image, aligned_depth_frame = get_aligned_images()
+        # Convert images to numpy arrays
+        # Apply colormap on depth image (image must be converted to 8-bit per pixel first)
+        depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(
+            depth_image, alpha=0.03), cv2.COLORMAP_JET)
+        # Stack both images horizontally
+        images = np.hstack((color_image, depth_colormap))
+        
+        # Show images
+
+        t_start = time.time()  # 开始计时
+        # YoloV5 目标检测
+        canvas, class_id_list, xyxy_list, conf_list = self.model.detect(
+            color_image)
+
+        t_end = time.time()  # 结束计时\
+        #canvas = np.hstack((canvas, depth_colormap))
+        #print(class_id_list)
+
+        camera_xyz_list=[]
+        if xyxy_list:
+            for i in range(len(xyxy_list)):
+                ux = int((xyxy_list[i][0]+xyxy_list[i][2])/2)  # 计算像素坐标系的x
+                uy = int((xyxy_list[i][1]+xyxy_list[i][3])/2)  # 计算像素坐标系的y
+                dis = aligned_depth_frame.get_distance(ux, uy)
+                camera_xyz = rs.rs2_deproject_pixel_to_point(
+                    depth_intrin, (ux, uy), dis)  # 计算相机坐标系的xyz
+                camera_xyz = np.round(np.array(camera_xyz), 3)  # 转成3位小数
+                camera_xyz = camera_xyz.tolist()
+                cv2.circle(canvas, (ux,uy), 4, (255, 255, 255), 5)#标出中心点
+                cv2.putText(canvas, str(camera_xyz), (ux+20, uy+10), 0, 1,
+                            [225, 255, 255], thickness=2, lineType=cv2.LINE_AA)#标出坐标
+                camera_xyz_list.append(camera_xyz)
+                print(camera_xyz_list)
+                                # 添加fps显示
+                if show_result:
+                    fps = int(1.0 / (t_end - t_start))
+                    cv2.putText(canvas, text="FPS: {}".format(fps), org=(50, 50),
+                                fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=1, thickness=2,
+                                lineType=cv2.LINE_AA, color=(0, 0, 0))
+                    cv2.namedWindow('detection', flags=cv2.WINDOW_NORMAL |
+                                    cv2.WINDOW_KEEPRATIO | cv2.WINDOW_GUI_EXPANDED)
+                    cv2.imshow('detection', canvas)
+                    k = cv2.waitKey(0)
+                    if k == 27:  # wait for ESC key to exit
+                        cv2.destroyAllWindows()
+        return camera_xyz_list
+
+    def hand_eye_transform(self, camera_xyz):
+        bTc = self.hand_eye
+        cTo = [[1.,  0, 0, camera_xyz[0]],
+               [0, 1., 0 ,  camera_xyz[1]],
+               [0 ,  0,  1., camera_xyz[2]],
+               [ 0.  ,  0.  ,  0.  ,  1.   ]]
+
+        bTo = np.dot(bTc,cTo)
+        xyz = transform.translation_from_matrix(bTo)
+        return xyz
+
+    def gripper_request(self,enable,target_width=0.08,speed=0.5,force=0.2,epsilon_inner=0.005,epsilon_outer=0.1):
+        req = FrankaHand.Request()
+        req.enable = enable
+        req.target_width = target_width
+        req.speed = speed
+        req.force = force
+        req.epsilon_inner = epsilon_inner
+        req.epsilon_outer = epsilon_outer
+        self.future = self.frankaHand_cli.call_async(req)
+        rclpy.spin_until_future_complete(self, self.future)
+        return self.future.result()
+
+    def send_cart_request(self, pose, duration):
+        req = CartMotionTime.Request()
+        req.pose = pose
+        req.duration = duration
+        self.future = self.cart_cli.call_async(req)
+        rclpy.spin_until_future_complete(self, self.future)
+        return self.future.result()
+
+    def send_joint_request(self, joints, velscale):
+        req = JointMotionVel.Request()
+        req.joints = joints
+        req.velscale = velscale
+        self.future = self.joint_cli.call_async(req)
+        rclpy.spin_until_future_complete(self, self.future)
+        return self.future.result()
+
+    def send_posePath_request(self, poses, duration):
+        req = PosePath.Request()
+        req.poses = poses
+        req.duration = duration
+        self.future = self.posePath_cli.call_async(req)
+        rclpy.spin_until_future_complete(self, self.future)
+        return self.future.result()
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    minimal_client = MinimalClientAsync()
+
+    response_gripper = minimal_client.gripper_request(False)
+    minimal_client.get_logger().info(
+        'Result for control franka hand executed with status %d' %
+        (response_gripper.success))
+    
+    camera_xyz_list = minimal_client.detect_once()
+    while len(camera_xyz_list) <1:
+        camera_xyz_list = minimal_client.detect_once()
+    base_xyz = minimal_client.hand_eye_transform(camera_xyz_list[0])
+    print("base_xyz is ",base_xyz)
+
+    pose1 = [base_xyz[0], base_xyz[1], base_xyz[2]-0.04, 3.1415926, 0.0, 0.0]
+    # # pose1 = [0.512888, -0.024801, 0.130688, 0.009026, -0.000185, -0.009763]
+    # pose1 = [0.495613, -0.039523, 0.1372314, 3.09829, -0.00640984, 0.0291367]
+    duration1 = 1.0
+    joint1 = [0.06625625610839737, -0.516543949110693, -0.18081555820766249, -2.7310316540481128, -0.09787116237481434, 2.2255856248657646, 0.7259974131426877]
+    # joint1 = [0.06576316667978721, -0.33619443085737394, -0.1804275372450417, -2.6659560173770838, -0.015912948752442996, 2.3126263302689836, 0.6636788695500128]
+    velscale1 = 0.6
+
+    poses = []
+    pose_a = [pose1[0], pose1[1], pose1[2]+0.2]
+    poses.extend(pose_a)
+    pose_b = [pose_a[0]-0.2, pose_a[1]-0.2, pose_a[2]]
+    poses.extend(pose_b)
+    pose_c = [pose_a[0]-0.4, pose_a[1]-0.3, pose_a[2]]
+    poses.extend(pose_c)
+    pose_d = [pose_a[0]-0.4, pose_a[1]-0.4, pose_a[2]+0.02]
+    poses.extend(pose_d)
+
+    print(poses)
+    duration2 = 8.0
+
+    response_joint = minimal_client.send_joint_request(joint1, velscale1)
+    minimal_client.get_logger().info(
+        'Result for joint [%f,%f,%f,%f,%f,%f,%f] with %f speed factor with status %d' %
+        (joint1[0],joint1[1],joint1[2],joint1[3],joint1[4],joint1[5],joint1[6], velscale1, response_joint.success))
+    
+    response_cart = minimal_client.send_cart_request(pose1, duration1)
+    minimal_client.get_logger().info(
+        'Result for pose [%f,%f,%f,%f,%f,%f] with %fs time executed with status %d' %
+        (pose1[0],pose1[1],pose1[2],pose1[3],pose1[4],pose1[5], duration1, response_cart.success))
+      
+
+    response_gripper = minimal_client.gripper_request(True, 0.03)
+    minimal_client.get_logger().info(
+        'Result for control franka hand executed with status %d' %
+        (response_gripper.success))
+
+
+    response_posePath = minimal_client.send_posePath_request(poses, duration2)
+    minimal_client.get_logger().info(
+        'Result for posePath executed with status %d' %
+        (response_posePath.success))
+
+    response_gripper = minimal_client.gripper_request(False)
+    minimal_client.get_logger().info(
+        'Result for control franka hand executed with status %d' %
+        (response_gripper.success))
+
+    response_joint = minimal_client.send_joint_request(joint1, velscale1)
+    minimal_client.get_logger().info(
+        'Result for joint [%f,%f,%f,%f,%f,%f,%f] with %f speed factor with status %d' %
+        (joint1[0],joint1[1],joint1[2],joint1[3],joint1[4],joint1[5],joint1[6], velscale1, response_joint.success))
+
+        
+
+    minimal_client.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

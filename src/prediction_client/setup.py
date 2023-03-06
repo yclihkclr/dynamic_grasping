@@ -1,6 +1,6 @@
 from setuptools import setup
 
-package_name = 'py_srvcli'
+package_name = 'prediction_client'
 
 setup(
     name=package_name,
@@ -20,8 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-        'test_franka_motion_server = py_srvcli.test_franka_motion_server:main',
-        'test_franka_motion_server_vision = py_srvcli.test_franka_motion_server_vision:main',
+        'test_franka_motion_server = prediction_client.test_franka_motion_server:main',
+        'test_franka_motion_server_vision = prediction_client.test_franka_motion_server_vision:main',
         ],
     },
 )

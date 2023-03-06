@@ -7,6 +7,7 @@ from franka_interfaces.srv import FrankaHand
 import rclpy
 from rclpy.node import Node
 import transform
+from srt_serial import PythonSerialDriver
 
 import random
 from utils.torch_utils import select_device, load_classifier, time_sync
@@ -195,14 +196,16 @@ class YoloV5:
             cv2.putText(img, label, (c1[0], c1[1] - 2), 0, tl / 3,
                         [225, 255, 255], thickness=tf, lineType=cv2.LINE_AA)
 
-class MinimalClientAsync(Node):
+class PredictionClientAsync(Node):
 
     def __init__(self):
-        super().__init__('minimal_client_async')
+        super().__init__('prediction_client_async')
         self.hand_eye= [[-0.00818685,  0.991227, -0.131914, 0.611423],
                        [0.999931, 0.00699775, -0.0094753 ,  -0.0206352],
                        [-0.00846908 ,  -0.131982,  -0.991216,  0.591267],
                        [ 0.        ,  0.        ,  0.        ,  1.        ]]
+        
+        self.srt = PythonSerialDriver()
 
         self.model = YoloV5(yolov5_yaml_path='src/py_srvcli/py_srvcli/yolov5_detect/config/yolov5s.yaml')
 
@@ -221,6 +224,55 @@ class MinimalClientAsync(Node):
         self.frankaHand_cli = self.create_client(FrankaHand, '/franka_motion/franka_hand')
         while not self.frankaHand_cli.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('service not available, waiting again...')
+
+    def pos_srt(self, pressure = 60):
+        self.srt.move3Fingers(True, pressure)
+
+    def neg_srt(self, pressure = 30):
+        self.srt.move3Fingers(False, pressure)        
+
+    def zero_srt(self, pressure = 0):
+        self.srt.move3Fingers(True, pressure)
+
+    def close_gripper(self,is_franka_hand=False):
+        if is_franka_hand:
+            response_gripper = self.gripper_request(False)
+            self.prediction_client.get_logger().info(
+            'Result for control franka hand executed with status %d' %
+            (response_gripper.success))
+        else:
+            self.pos_srt()
+            self.prediction_client.get_logger().info(
+            'srt positve pressure to close gripper')
+
+    def open_gripper(self,is_franka_hand=False):
+        if is_franka_hand:
+            response_gripper = self.gripper_request(True, 0.03)
+            self.prediction_client.get_logger().info(
+            'Result for control franka hand executed with status %d' %
+            (response_gripper.success))
+        else:
+            self.neg_srt()
+            self.prediction_client.get_logger().info(
+            'srt negtive pressure to open gripper')
+
+    def move_to_joints(self,joints,velscale):
+        response_joint = self.send_joint_request(joints, velscale)
+        self.get_logger().info(
+        'Result for joint [%f,%f,%f,%f,%f,%f,%f] with %f speed factor with status %d' %
+        (joints[0],joints[1],joints[2],joints[3],joints[4],joints[5],joints[6], velscale, response_joint.success))
+
+    def cart_pose_time(self,pose,duration):
+        response_cart = self.send_cart_request(pose, duration)
+        self.get_logger().info(
+        'Result for pose [%f,%f,%f,%f,%f,%f] with %fs time executed with status %d' %
+        (pose[0],pose[1],pose[2],pose[3],pose[4],pose[5], duration, response_cart.success))
+
+    def cart_path_time(self,poses,duration):
+        response_posePath = self.send_posePath_request(poses, duration)
+        self.get_logger().info(
+        'Result for posePath executed with status %d' %
+        (response_posePath.success))
 
     def detect_once(self,show_result = True):
     # Wait for a coherent pair of frames: depth and color
@@ -321,20 +373,24 @@ class MinimalClientAsync(Node):
         rclpy.spin_until_future_complete(self, self.future)
         return self.future.result()
 
+    def add_waypoint_to_path(self,path,pose):
+        path.extend(pose)
+
+    def pose_offset(self,pose,x_offset,y_offset,z_offset):
+        return [pose[0]+x_offset, pose[1]+y_offset, pose[2]+z_offset]
+
+
 def main(args=None):
     rclpy.init(args=args)
 
-    minimal_client = MinimalClientAsync()
+    prediction_client = PredictionClientAsync()
 
-    response_gripper = minimal_client.gripper_request(False)
-    minimal_client.get_logger().info(
-        'Result for control franka hand executed with status %d' %
-        (response_gripper.success))
+    prediction_client.open_gripper()
     
-    camera_xyz_list = minimal_client.detect_once()
+    camera_xyz_list = prediction_client.detect_once()
     while len(camera_xyz_list) <1:
-        camera_xyz_list = minimal_client.detect_once()
-    base_xyz = minimal_client.hand_eye_transform(camera_xyz_list[0])
+        camera_xyz_list = prediction_client.detect_once()
+    base_xyz = prediction_client.hand_eye_transform(camera_xyz_list[0])
     print("base_xyz is ",base_xyz)
 
     pose1 = [base_xyz[0], base_xyz[1], base_xyz[2]-0.04, 3.1415926, 0.0, 0.0]
@@ -346,53 +402,35 @@ def main(args=None):
     velscale1 = 0.6
 
     poses = []
-    pose_a = [pose1[0], pose1[1], pose1[2]+0.2]
-    poses.extend(pose_a)
-    pose_b = [pose_a[0]-0.2, pose_a[1]-0.2, pose_a[2]]
-    poses.extend(pose_b)
-    pose_c = [pose_a[0]-0.4, pose_a[1]-0.3, pose_a[2]]
-    poses.extend(pose_c)
-    pose_d = [pose_a[0]-0.4, pose_a[1]-0.4, pose_a[2]+0.02]
-    poses.extend(pose_d)
+    pose_a = prediction_client.pose_offset(pose1,0,0,0.2)
+    prediction_client.add_waypoint_to_path(poses,pose_a)
+
+    pose_b = prediction_client.pose_offset(pose_a,-0.2,-0.2,0)
+    prediction_client.add_waypoint_to_path(poses,pose_b)
+
+    pose_c = prediction_client.pose_offset(pose_a,-0.4,-0.3,0)
+    prediction_client.add_waypoint_to_path(poses,pose_c)
+
+    pose_d = prediction_client.pose_offset(pose_a,-0.4,-0.4,0.02)
+    prediction_client.add_waypoint_to_path(poses,pose_d)
 
     print(poses)
     duration2 = 8.0
 
-    response_joint = minimal_client.send_joint_request(joint1, velscale1)
-    minimal_client.get_logger().info(
-        'Result for joint [%f,%f,%f,%f,%f,%f,%f] with %f speed factor with status %d' %
-        (joint1[0],joint1[1],joint1[2],joint1[3],joint1[4],joint1[5],joint1[6], velscale1, response_joint.success))
+    prediction_client.move_to_joints(joint1,velscale1)
+
+    prediction_client.cart_pose_time(pose1,duration1)
     
-    response_cart = minimal_client.send_cart_request(pose1, duration1)
-    minimal_client.get_logger().info(
-        'Result for pose [%f,%f,%f,%f,%f,%f] with %fs time executed with status %d' %
-        (pose1[0],pose1[1],pose1[2],pose1[3],pose1[4],pose1[5], duration1, response_cart.success))
-      
+    prediction_client.close_gripper()
 
-    response_gripper = minimal_client.gripper_request(True, 0.03)
-    minimal_client.get_logger().info(
-        'Result for control franka hand executed with status %d' %
-        (response_gripper.success))
+    prediction_client.cart_path_time(poses,duration2)
+
+    prediction_client.open_gripper()
+
+    prediction_client.move_to_joints(joint1,velscale1)
 
 
-    response_posePath = minimal_client.send_posePath_request(poses, duration2)
-    minimal_client.get_logger().info(
-        'Result for posePath executed with status %d' %
-        (response_posePath.success))
-
-    response_gripper = minimal_client.gripper_request(False)
-    minimal_client.get_logger().info(
-        'Result for control franka hand executed with status %d' %
-        (response_gripper.success))
-
-    response_joint = minimal_client.send_joint_request(joint1, velscale1)
-    minimal_client.get_logger().info(
-        'Result for joint [%f,%f,%f,%f,%f,%f,%f] with %f speed factor with status %d' %
-        (joint1[0],joint1[1],joint1[2],joint1[3],joint1[4],joint1[5],joint1[6], velscale1, response_joint.success))
-
-        
-
-    minimal_client.destroy_node()
+    prediction_client.destroy_node()
     rclpy.shutdown()
 
 

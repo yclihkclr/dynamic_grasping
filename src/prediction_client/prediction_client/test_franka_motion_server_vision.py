@@ -30,44 +30,44 @@ import numpy as np
 import sys
 import cv2
 
-# pipeline = rs.pipeline()  # 定义流程pipeline
-# config = rs.config()  # 定义配置config
-# config.enable_stream(rs.stream.depth, 848, 480, rs.format.z16, 30)
-# config.enable_stream(rs.stream.color, 848, 480, rs.format.bgr8, 30)
-# profile = pipeline.start(config)  # 流程开始
-# align_to = rs.stream.color  # 与color流对齐
-# align = rs.align(align_to)
+pipeline = rs.pipeline()  # 定义流程pipeline
+config = rs.config()  # 定义配置config
+config.enable_stream(rs.stream.depth, 848, 480, rs.format.z16, 30)
+config.enable_stream(rs.stream.color, 848, 480, rs.format.bgr8, 30)
+profile = pipeline.start(config)  # 流程开始
+align_to = rs.stream.color  # 与color流对齐
+align = rs.align(align_to)
 
 
-# def get_aligned_images():
-#     frames = pipeline.wait_for_frames()  # 等待获取图像帧
-#     aligned_frames = align.process(frames)  # 获取对齐帧
-#     aligned_depth_frame = aligned_frames.get_depth_frame()  # 获取对齐帧中的depth帧
-#     color_frame = aligned_frames.get_color_frame()  # 获取对齐帧中的color帧
+def get_aligned_images():
+    frames = pipeline.wait_for_frames()  # 等待获取图像帧
+    aligned_frames = align.process(frames)  # 获取对齐帧
+    aligned_depth_frame = aligned_frames.get_depth_frame()  # 获取对齐帧中的depth帧
+    color_frame = aligned_frames.get_color_frame()  # 获取对齐帧中的color帧
 
-#     ############### 相机参数的获取 #######################
-#     intr = color_frame.profile.as_video_stream_profile().intrinsics  # 获取相机内参
-#     depth_intrin = aligned_depth_frame.profile.as_video_stream_profile(
-#     ).intrinsics  # 获取深度参数（像素坐标系转相机坐标系会用到）
-#     '''camera_parameters = {'fx': intr.fx, 'fy': intr.fy,
-#                          'ppx': intr.ppx, 'ppy': intr.ppy,
-#                          'height': intr.height, 'width': intr.width,
-#                          'depth_scale': profile.get_device().first_depth_sensor().get_depth_scale()
-#                          }'''
+    ############### 相机参数的获取 #######################
+    intr = color_frame.profile.as_video_stream_profile().intrinsics  # 获取相机内参
+    depth_intrin = aligned_depth_frame.profile.as_video_stream_profile(
+    ).intrinsics  # 获取深度参数（像素坐标系转相机坐标系会用到）
+    '''camera_parameters = {'fx': intr.fx, 'fy': intr.fy,
+                         'ppx': intr.ppx, 'ppy': intr.ppy,
+                         'height': intr.height, 'width': intr.width,
+                         'depth_scale': profile.get_device().first_depth_sensor().get_depth_scale()
+                         }'''
 
-#     # 保存内参到本地
-#     # with open('./intrinsics.json', 'w') as fp:
-#     #json.dump(camera_parameters, fp)
-#     #######################################################
+    # 保存内参到本地
+    # with open('./intrinsics.json', 'w') as fp:
+    #json.dump(camera_parameters, fp)
+    #######################################################
 
-#     depth_image = np.asanyarray(aligned_depth_frame.get_data())  # 深度图（默认16位）
-#     depth_image_8bit = cv2.convertScaleAbs(depth_image, alpha=0.03)  # 深度图（8位）
-#     depth_image_3d = np.dstack(
-#         (depth_image_8bit, depth_image_8bit, depth_image_8bit))  # 3通道深度图
-#     color_image = np.asanyarray(color_frame.get_data())  # RGB图
+    depth_image = np.asanyarray(aligned_depth_frame.get_data())  # 深度图（默认16位）
+    depth_image_8bit = cv2.convertScaleAbs(depth_image, alpha=0.03)  # 深度图（8位）
+    depth_image_3d = np.dstack(
+        (depth_image_8bit, depth_image_8bit, depth_image_8bit))  # 3通道深度图
+    color_image = np.asanyarray(color_frame.get_data())  # RGB图
 
-#     # 返回相机内参、深度参数、彩色图、深度图、齐帧中的depth帧
-#     return intr, depth_intrin, color_image, depth_image, aligned_depth_frame
+    # 返回相机内参、深度参数、彩色图、深度图、齐帧中的depth帧
+    return intr, depth_intrin, color_image, depth_image, aligned_depth_frame
 
 class YoloV5:
     def __init__(self, yolov5_yaml_path='config/yolov5s.yaml'):
@@ -201,13 +201,13 @@ class PredictionClientAsync(Node):
 
     def __init__(self):
         super().__init__('prediction_client_async')
-        self.hand_eye= [[-0.00818685,  0.991227, -0.131914, 0.611423],
-                       [0.999931, 0.00699775, -0.0094753 ,  -0.0206352],
+        self.hand_eye= [[-0.00818685,  0.991227, -0.131914, 0.621423],
+                       [0.999931, 0.00699775, -0.0094753 ,  -0.0256352],
                        [-0.00846908 ,  -0.131982,  -0.991216,  0.591267],
                        [ 0.        ,  0.        ,  0.        ,  1.        ]]
-        self.srt = PythonSerialDriver("/dev/ttyUSB1")
+        self.srt = PythonSerialDriver("/dev/ttyUSB0")
 
-        # self.model = YoloV5(yolov5_yaml_path='src/prediction_client/prediction_client/yolov5_detect/config/yolov5s.yaml')
+        self.model = YoloV5(yolov5_yaml_path='src/prediction_client/prediction_client/yolov5_detect/config/yolov5s.yaml')
 
         self.cart_cli = self.create_client(CartMotionTime, '/franka_motion/cart_motion_time')
         while not self.cart_cli.wait_for_service(timeout_sec=1.0):
@@ -230,7 +230,7 @@ class PredictionClientAsync(Node):
     # def robotState_cb(self,msg):
     #     print(msg)
 
-    def pos_srt(self, pressure = 40):
+    def pos_srt(self, pressure = 60):
         self.srt.move3Fingers(True, pressure)
 
     def neg_srt(self, pressure = 20):
@@ -260,6 +260,8 @@ class PredictionClientAsync(Node):
             self.neg_srt()
             self.get_logger().info(
             'srt negtive pressure to open gripper')
+            # time.sleep(0.2)
+            # self.pos_srt(0)
 
     def move_to_joints(self,joints,velscale):
         response_joint = self.send_joint_request(joints, velscale)
@@ -349,7 +351,7 @@ class PredictionClientAsync(Node):
         bTo[2,3]=base_xyzrpy[2]
         eTg = [[math.cos(math.pi/12),  -math.sin(math.pi/12), 0, 0],
                [math.sin(math.pi/12),   math.cos(math.pi/12),  0 ,  0],
-               [0 ,  0,  1., 0.07],
+               [0 ,  0,  1.,                                0.02],
                [ 0.  ,  0.  ,  0.  ,  1.   ]]
         
         bTe = np.dot(bTo,np.linalg.inv(eTg))
@@ -406,23 +408,26 @@ def main(args=None):
 
     prediction_client.open_gripper()
     
-    # camera_xyz_list = prediction_client.detect_once()
-    # while len(camera_xyz_list) <1:
-    #     camera_xyz_list = prediction_client.detect_once()
-    # base_xyz = prediction_client.hand_eye_transform(camera_xyz_list[0])
-    # print("base_xyz is ",base_xyz)
+    init_joint = [0.16312787685894567, -0.9984653897620572, -0.13817682679145038, -2.6634519014816442, -0.1601847994128863, 1.7038212698830497, 0.6833146796069212]
+    velscale = 0.3
+    prediction_client.move_to_joints(init_joint,velscale)
+    time.sleep(0.1)
+    pre_pick_joint = [0.13821194475575496, -0.4434162515090197, -0.12757366092581499, -2.4691517728457257, -0.09563205587863921, 2.0746510965419294, 0.6008980268862696]
+    prediction_client.move_to_joints(pre_pick_joint,velscale)
+    
+    camera_xyz_list = prediction_client.detect_once()
+    while len(camera_xyz_list) <1:
+        camera_xyz_list = prediction_client.detect_once()
+    base_xyz = prediction_client.hand_eye_transform(camera_xyz_list[0])
+    print("base_xyz is ",base_xyz)
 
-    # target_pose = [base_xyz[0], base_xyz[1], base_xyz[2], 3.1415926, 0.0, 0.0]
-    target_pose = [0.512888, -0.024801, 0.170688, 3.1415926, 0.0, 0.0]
+    target_pose = [base_xyz[0], base_xyz[1], base_xyz[2], 3.1415926, 0.0, 0.0]
+    # target_pose = [0.512888, -0.024801, 0.170688, 3.1415926, 0.0, 0.0]
     target_pose = prediction_client.soft_gripper_eef_transform(target_pose)
     print("target_pose is:", target_pose)
-    duration1 = 10.0
-    start_joint = [0.16312787685894567, -0.9984653897620572, -0.13817682679145038, -2.6634519014816442, -0.1601847994128863, 1.7038212698830497, 0.6833146796069212]
-    velscale = 0.3
+    duration1 = 1.0
 
-    prediction_client.move_to_joints(start_joint,velscale)
 
-    pre_pick_joint = [0.14497976664077877, -0.5030920066137881, -0.19581159776135493, -2.5570257458976453, -0.1387937274352679, 2.049772029622023, 0.6149560858255458]
 
     poses = []
     pose_a = prediction_client.pose_offset(target_pose,0,0,0.2)
@@ -438,9 +443,9 @@ def main(args=None):
     prediction_client.add_waypoint_to_path(poses,pose_d)
 
     print(poses)
-    duration2 = 8.0
+    duration2 = 4.0
 
-    prediction_client.move_to_joints(pre_pick_joint,velscale)
+
 
     prediction_client.cart_pose_time(target_pose,duration1)
     

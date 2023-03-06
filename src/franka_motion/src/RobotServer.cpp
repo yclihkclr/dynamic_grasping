@@ -128,6 +128,7 @@ bool RobotServer::jointMotionVelSrvCb(const std::shared_ptr<franka_interfaces::s
     RCLCPP_INFO(rclcpp::get_logger("robot_server"), "jointMotionVelSrvCb");
     std::array<double, 7> q_goal = {{req->joints[0],req->joints[1],req->joints[2],req->joints[3],req->joints[4],req->joints[5],req->joints[6]}};
     robot_->updateRobotStateFlag_ = false;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     robot_->joint_motion(q_goal, req->velscale);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     robot_->updateRobotStateFlag_ = true;
@@ -158,7 +159,7 @@ bool RobotServer::posePathBezierCb(const std::shared_ptr<franka_interfaces::srv:
     robot_->updateRobotStateFlag_ = false;
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     robot_->move_cartesian(bezier_movement, req->duration);
-
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     robot_->updateRobotStateFlag_ = true;
 
     bool ok = !robot_->hasErrors();

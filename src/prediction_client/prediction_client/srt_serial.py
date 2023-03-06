@@ -13,24 +13,26 @@ class PythonSerialDriver():
         baud = 38400
         baseports = ['/dev/ttyUSB', '/dev/ttyACM', 'COM', '/dev/tty.usbmodem1234']
         self.ser = None
+
+        port = "/dev/ttyUSB0"
+        self.ser = serial.Serial(port, baud, timeout=1) # 1s timeout
+        # while not self.ser:
+        #     for baseport in baseports:
+        #         if self.ser:
+        #             break
+        #         for i in range(0, 64):
+        #             try:
+        #                 port = baseport + str(i)
+        #                 self.ser = serial.Serial(port, baud, timeout=1) # 1s timeout
+        #                 print (repr('Driver: Opened ' + port + '\r'))
+        #                 break
+        #             except:
+        #                 self.ser = None
+        #                 pass
         
-        while not self.ser:
-            for baseport in baseports:
-                if self.ser:
-                    break
-                for i in range(0, 64):
-                    try:
-                        port = baseport + str(i)
-                        self.ser = serial.Serial(port, baud, timeout=1) # 1s timeout
-                        print (repr('Driver: Opened ' + port + '\r'))
-                        break
-                    except:
-                        self.ser = None
-                        pass
-        
-            if not self.ser:
-                    print (repr('Driver: Could not open a serial port!!!'))
-                    sys.exit(1)      
+        #     if not self.ser:
+        #             print (repr('Driver: Could not open a serial port!!!'))
+        #             sys.exit(1)      
 
         self.ser.reset_input_buffer()
         self.ser.reset_output_buffer()               
@@ -73,7 +75,7 @@ class PythonSerialDriver():
         self.base = 0x16
 
         self.counter = 10   # loopTest       
-        self.printLog = True   
+        self.printLog = False  # True   
 
     def send(self, data):
         self.commands = data
@@ -287,13 +289,13 @@ class PythonSerialDriver():
             if bOpen is True:
                 # if (self.moveTo(self.FLG_ZERO, 0) == - 1):
                 #     return False
-                if (self.moveTo(self.FLG_POS, pressure, None, False) == -1):
+                if (self.moveTo(self.FLG_POS, pressure+9.0, None, False) == -1):
                     return False
 
             else:
                 # if (self.moveTo(self.FLG_ZERO, 0, None, False) == -1):
                 #     return False
-                if (self.moveTo(self.FLG_NEG, pressure, None, False) == -1):
+                if (self.moveTo(self.FLG_NEG, -pressure-7.0, None, False) == -1):
                     return False
         
         time.sleep(delay)
@@ -309,7 +311,37 @@ if __name__ == '__main__':
     srt = PythonSerialDriver()
 
     while 1:
+            # srt.move3Fingers(True, 60)
+            # time.sleep(1.0)
+            # srt.move3Fingers(False, 60)
+            # time.sleep(1.0)
+
+            # srt.move3Fingers(True, 45)
+            # time.sleep(1.0)
+            # srt.move3Fingers(False, 60)
+            # time.sleep(1.0)
+
             srt.move3Fingers(True, 30)
             time.sleep(1.0)
             srt.move3Fingers(False, 30)
             time.sleep(1.0)
+
+            # srt.move3Fingers(True, 15)
+            # time.sleep(1.0)
+            # srt.move3Fingers(False, 60)
+            # time.sleep(1.0)
+
+            # srt.move3Fingers(True, 10)
+            # time.sleep(1.0)
+            # srt.move3Fingers(False, 60)
+            # time.sleep(1.0)
+
+            # srt.move3Fingers(True, 5)
+            # time.sleep(1.0)
+            # srt.move3Fingers(False, 60)
+            # time.sleep(1.0)
+
+            # srt.move3Fingers(True, 0)
+            # time.sleep(1.0)
+            # srt.move3Fingers(False, 60)
+            # time.sleep(1.0)

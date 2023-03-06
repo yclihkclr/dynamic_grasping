@@ -237,23 +237,23 @@ class PredictionClientAsync(Node):
     def close_gripper(self,is_franka_hand=False):
         if is_franka_hand:
             response_gripper = self.gripper_request(False)
-            self.prediction_client.get_logger().info(
+            self.get_logger().info(
             'Result for control franka hand executed with status %d' %
             (response_gripper.success))
         else:
             self.pos_srt()
-            self.prediction_client.get_logger().info(
+            self.get_logger().info(
             'srt positve pressure to close gripper')
 
     def open_gripper(self,is_franka_hand=False):
         if is_franka_hand:
             response_gripper = self.gripper_request(True, 0.03)
-            self.prediction_client.get_logger().info(
+            self.get_logger().info(
             'Result for control franka hand executed with status %d' %
             (response_gripper.success))
         else:
             self.neg_srt()
-            self.prediction_client.get_logger().info(
+            self.get_logger().info(
             'srt negtive pressure to open gripper')
 
     def move_to_joints(self,joints,velscale):
@@ -393,7 +393,7 @@ def main(args=None):
     base_xyz = prediction_client.hand_eye_transform(camera_xyz_list[0])
     print("base_xyz is ",base_xyz)
 
-    pose1 = [base_xyz[0], base_xyz[1], base_xyz[2]+0.04, 3.1415926, 0.0, 0.0]
+    pose1 = [base_xyz[0], base_xyz[1], base_xyz[2], 3.1415926, 0.0, 0.0]
     # # pose1 = [0.512888, -0.024801, 0.130688, 0.009026, -0.000185, -0.009763]
     # pose1 = [0.495613, -0.039523, 0.1372314, 3.09829, -0.00640984, 0.0291367]
     duration1 = 3.0

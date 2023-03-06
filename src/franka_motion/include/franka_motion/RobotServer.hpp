@@ -4,6 +4,7 @@
 #include "franka_interfaces/srv/joint_motion_vel.hpp"
 #include "franka_interfaces/srv/pose_path.hpp"
 #include "franka_interfaces/srv/franka_hand.hpp"
+#include "franka_interfaces/msg/robot_state.hpp"
 
 class RobotServer {
 public:
@@ -22,8 +23,13 @@ public:
        std::shared_ptr<franka_interfaces::srv::FrankaHand::Response> res);
 
     bool controlGripper(bool enable, double target_width=0.01, double speed=0.15, double force=0.2, double epsilon_inner=0.005, double epsilon_outer=0.1);
-
+    
+    bool publishRobotStates();
+    
+    void  UpdateRobotState();
 private:
+    std::vector<double> joint_state_{0,0,0,0,0,0,0};
+    std::vector<double> pose_state_{0,0,0,0,0,0};
     std::shared_ptr<rclcpp::Node> node_;
     std::shared_ptr<orl::Robot> robot_;
 
@@ -31,6 +37,6 @@ private:
     rclcpp::Service<franka_interfaces::srv::JointMotionVel>::SharedPtr jointMotionVelService_;
     rclcpp::Service<franka_interfaces::srv::PosePath>::SharedPtr posePathService_;
     rclcpp::Service<franka_interfaces::srv::FrankaHand>::SharedPtr frankaHandService_;
-    // rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr jointStatesPublisher_;
+    rclcpp::Publisher<franka_interfaces::msg::RobotState>::SharedPtr robotStatesPublisher_;
     // rclcpp::Subscription<std_msgs::msg::String>::SharedPtr stopMotionSubscriber_;
 };

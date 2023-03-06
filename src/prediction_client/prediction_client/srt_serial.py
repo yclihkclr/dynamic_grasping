@@ -7,14 +7,13 @@ import serial
 import struct
 
 class PythonSerialDriver():
-    def __init__(self):
+    def __init__(self,port):
         self.windows = False
         # (38400Kbit/s, 8,N,1)
         baud = 38400
         baseports = ['/dev/ttyUSB', '/dev/ttyACM', 'COM', '/dev/tty.usbmodem1234']
         self.ser = None
 
-        port = "/dev/ttyUSB0"
         self.ser = serial.Serial(port, baud, timeout=1) # 1s timeout
         # while not self.ser:
         #     for baseport in baseports:

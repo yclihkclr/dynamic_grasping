@@ -4,10 +4,16 @@ const std::string cart_motion_time_srv_id = "/franka_motion/cart_motion_time";
 const std::string joint_motion_vel_srv_id = "/franka_motion/joint_motion_vel";
 const std::string pose_path_srv_id = "/franka_motion/pose_path";
 const std::string franka_hand_srv_id = "/franka_motion/franka_hand";
+
+const std::string robot_states_msg_id = "/franka_motion/robot_states";
 const std::string franka_fci_ip = "192.168.1.20";
 
 RobotServer::RobotServer(std::shared_ptr<rclcpp::Node> node, bool use_franka_hand) {
     node_ = node;
+
+    // Initialize robotstate publisher
+    robotStatesPublisher_ = node->create_publisher<franka_interfaces::msg::RobotState>(robot_states_msg_id, 10);
+    RCLCPP_INFO(rclcpp::get_logger("robot_server"), "Advertising Publisher %s", robot_states_msg_id.c_str());
 
     // Initialize scaling velocity and acceleration service
     cartMotionTimeService_ = node->create_service<franka_interfaces::srv::CartMotionTime>(cart_motion_time_srv_id, std::bind(&RobotServer::cartMotionTimeSrvCb, this, std::placeholders::_1, std::placeholders::_2));
@@ -23,13 +29,43 @@ RobotServer::RobotServer(std::shared_ptr<rclcpp::Node> node, bool use_franka_han
     RCLCPP_INFO(rclcpp::get_logger("robot_server"), "Advertising service %s", franka_hand_srv_id.c_str());
 
     robot_ = std::make_shared<orl::Robot>(franka_fci_ip,use_franka_hand);
+    UpdateRobotState();
 
     // init pose
     if(use_franka_hand){controlGripper(false,0.03);}
-    std::array<double, 7> q_goal = {{0.058432293025024944, -0.7970709721832945, -0.19613238666559518, -2.7730435522313703, -0.14883224842143097, 2.034597985161675, 0.7228324700781736}};
-    robot_->joint_motion(q_goal, 0.2); 
+    // std::array<double, 7> q_goal = {{0.058432293025024944, -0.7970709721832945, -0.19613238666559518, -2.7730435522313703, -0.14883224842143097, 2.034597985161675, 0.7228324700781736}};
+    // robot_->joint_motion(q_goal, 0.2); 
 }
 
+bool RobotServer::publishRobotStates() {
+    franka_interfaces::msg::RobotState msg;
+    UpdateRobotState();
+    msg.pose_state = pose_state_;
+    msg.joint_state = joint_state_;
+        // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "publishJointStates %f %f %f %f %f %f %f", msg.position[0],
+        //   msg.position[1], msg.position[2], msg.position[3], msg.position[4], msg.position[5]);
+
+        robotStatesPublisher_->publish(msg);
+        return true;}
+
+
+void  RobotServer::UpdateRobotState()
+{
+    if(robot_->updateRobotStateFlag_){robot_->updateRobotState();}
+    for (int i=0;i<7;i++)
+    {
+      joint_state_[i] = robot_->state_.q[i];
+    }
+    orl::Pose pose_matrix(robot_->state_.O_T_EE_c);
+    double roll, pitch, yaw;
+    pose_matrix.get_RPY(roll, pitch, yaw);
+    pose_state_[0] = pose_matrix.translation().x();
+    pose_state_[1] = pose_matrix.translation().y();
+    pose_state_[2] = pose_matrix.translation().z();
+    pose_state_[3] = roll;
+    pose_state_[4] = pitch;
+    pose_state_[5] = yaw;
+}
 
 bool RobotServer::controlGripper(bool enable, double target_width, double speed, double force,double epsilon_inner, double epsilon_outer){
     // if (enable) {
@@ -91,8 +127,10 @@ bool RobotServer::jointMotionVelSrvCb(const std::shared_ptr<franka_interfaces::s
     RCLCPP_INFO(rclcpp::get_logger("robot_server"), "Velocity Scaling %f",req->velscale);
     RCLCPP_INFO(rclcpp::get_logger("robot_server"), "jointMotionVelSrvCb");
     std::array<double, 7> q_goal = {{req->joints[0],req->joints[1],req->joints[2],req->joints[3],req->joints[4],req->joints[5],req->joints[6]}};
-    robot_->joint_motion(q_goal, req->velscale); 
-
+    robot_->updateRobotStateFlag_ = false;
+    robot_->joint_motion(q_goal, req->velscale);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    robot_->updateRobotStateFlag_ = true;
     bool ok = !robot_->hasErrors();
     res->success = ok;
     if (ok) {
@@ -117,7 +155,11 @@ bool RobotServer::posePathBezierCb(const std::shared_ptr<franka_interfaces::srv:
 
     auto bezier_movement = orl::PoseGenerators::BezierMotion(way_points);
     orl::apply_speed_profile(bezier_movement, orl::SpeedProfiles::QuinticPolynomialProfile());
+    robot_->updateRobotStateFlag_ = false;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     robot_->move_cartesian(bezier_movement, req->duration);
+
+    robot_->updateRobotStateFlag_ = true;
 
     bool ok = !robot_->hasErrors();
     res->success = ok;

@@ -20,7 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-        'test_franka_motion_server = prediction_client.test_franka_motion_server:main',
+        'test_franka_motion_read_states = prediction_client.test_franka_motion_read_states:main',
         'test_franka_motion_server_vision = prediction_client.test_franka_motion_server_vision:main',
         ],
     },

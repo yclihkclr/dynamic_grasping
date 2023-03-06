@@ -21,6 +21,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/RobotState.msg"
   "srv/CartMotionTime.srv"
   "srv/JointMotionVel.srv"
   "srv/PosePath.srv"

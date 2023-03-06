@@ -12,6 +12,7 @@
 
 using namespace orl;
 
+
 void
 Robot::relative_cart_motion(double x, double y, double z, const double max_time,
                             const boost::optional<StopCondition> &stop_condition) {
@@ -25,7 +26,9 @@ Robot::relative_cart_motion(double x, double y, double z, const double max_time,
 void Robot::cart_motion(const Pose &dest, const double max_time, const boost::optional<StopCondition> &stop_condition) {
     PoseGenerator pose_generator = PoseGenerators::MoveToPose(dest);
     apply_speed_profile(pose_generator);
+    updateRobotStateFlag_ = false;
     move_cartesian(pose_generator, max_time, stop_condition);
+    updateRobotStateFlag_ = true;
 }
 
 
@@ -64,6 +67,10 @@ bool Robot::recoverFromErrors() {
     return !hasErrors();
 }
 
+void Robot::updateRobotState() {
+    state_ =robot.readOnce();
+}
+
 Robot::Robot(const std::string &robot_name, bool use_franka_hand):robot(robot_name), model(robot.loadModel()) {
     if(use_franka_hand)
     {
@@ -76,6 +83,7 @@ Robot::Robot(const std::string &robot_name, bool use_franka_hand):robot(robot_na
     setDefaultBehavior();
     Payload zero_payload = Payloads::Sphere(0, 0, {0, 0, 0});
     setLoad(zero_payload);
+    updateRobotState();
     
 }
 
@@ -110,6 +118,7 @@ void
 Robot::impedance_mode(double translational_stiffness, double rotational_stiffness,
                       double max_time, const PoseGenerator &attractor_pose_generator,
                       double move_to_attractor_duration) {
+    updateRobotStateFlag_ = false;                    
 
     Eigen::MatrixXd stiffness(6, 6), damping(6, 6);
     stiffness.setZero();
@@ -139,6 +148,7 @@ Robot::impedance_mode(double translational_stiffness, double rotational_stiffnes
                 impedance_control_callback = [&](const franka::RobotState &robot_state,
                                                  franka::Duration duration) -> franka::Torques {
             // get state variables
+            state_ = robot_state;
             time += duration.toSec();
             if (time == 0) {
                 initial_pose.set(robot_state.O_T_EE_c);
@@ -189,6 +199,7 @@ Robot::impedance_mode(double translational_stiffness, double rotational_stiffnes
             std::array<double, 7> tau_d_array{};
             Eigen::VectorXd::Map(&tau_d_array[0], 7) = tau_d;
             if (time > max_time) {
+                updateRobotStateFlag_ = true;
                 return franka::MotionFinished(franka::Torques(tau_d_array));
             }
             return tau_d_array;
@@ -211,7 +222,7 @@ void Robot::move_cartesian(PoseGenerator cartesian_pose_generator, double max_ti
     std::array<double, 2> initial_elbow;
 
     double time = 0.0;
-
+    
 //    std::cout << "Start motion..." << std::endl;
     bool should_stop = false;
     try {
@@ -219,6 +230,7 @@ void Robot::move_cartesian(PoseGenerator cartesian_pose_generator, double max_ti
                 [=, &initial_elbow, &time, &max_time, &initial_pose, &cartesian_pose_generator, &should_stop](
                         const franka::RobotState &state,
                         franka::Duration time_step) -> franka::CartesianPose {
+                            state_ = state;
                     time += time_step.toSec();
                     if (time == 0) {
                         initial_pose.set(state.O_T_EE_c);
@@ -344,6 +356,7 @@ void Robot::double_tap_robot_to_continue() {
 //                std::cout << Pose(robot_state.O_T_EE).orientation.quaternion.toRotationMatrix() << std::endl<<std::endl;
                 // Printing to std::cout adds a delay. This is acceptable for a read loop such as this,
                 // but should not be done in a control loop.
+                state_ = robot_state;
                 Eigen::Vector3d force;
                 force << robot_state.O_F_ext_hat_K[0], robot_state.O_F_ext_hat_K[1], robot_state.O_F_ext_hat_K[2];
 //                std::cout << (start_force - force).norm() << std::endl;
@@ -376,7 +389,7 @@ void Robot::double_tap_robot_to_continue() {
 }
 
 void Robot::force_to_continue(double force, Axis axis) {
-
+    updateRobotStateFlag_ = false;
     auto s = robot.readOnce();
 
     Eigen::Vector3d start_force;
@@ -384,6 +397,7 @@ void Robot::force_to_continue(double force, Axis axis) {
     robot.read(
             [&](
                     const franka::RobotState &robot_state) {
+                        state_ = robot_state;
 //                std::cout << Pose(robot_state.O_T_EE).orientation.quaternion.toRotationMatrix() << std::endl<<std::endl;
                 // Printing to std::cout adds a delay. This is acceptable for a read loop such as this,
                 // but should not be done in a control loop.
@@ -397,6 +411,7 @@ void Robot::force_to_continue(double force, Axis axis) {
 }
 
 bool Robot::force_to_continue(double force, Axis axis, double time_out) {
+    updateRobotStateFlag_ = true;
     auto s = robot.readOnce();
 
     Eigen::Vector3d start_force;
@@ -405,6 +420,7 @@ bool Robot::force_to_continue(double force, Axis axis, double time_out) {
     robot.read(
             [&](
                     const franka::RobotState &robot_state) {
+                        state_ = robot_state;
                 counter++;
 //                std::cout << Pose(robot_state.O_T_EE).orientation.quaternion.toRotationMatrix() << std::endl<<std::endl;
                 // Printing to std::cout adds a delay. This is acceptable for a read loop such as this,
@@ -422,7 +438,7 @@ bool Robot::force_to_continue(double force, Axis axis, double time_out) {
 }
 
 void Robot::torque_to_continue(double torque, Axis axis) {
-
+    updateRobotStateFlag_ = true;
     auto s = robot.readOnce();
 
     Eigen::Vector3d start_force;
@@ -430,6 +446,7 @@ void Robot::torque_to_continue(double torque, Axis axis) {
     robot.read(
             [&](
                     const franka::RobotState &robot_state) {
+                        state_ = robot_state;
 //                std::cout << Pose(robot_state.O_T_EE).orientation.quaternion.toRotationMatrix() << std::endl<<std::endl;
                 // Printing to std::cout adds a delay. This is acceptable for a read loop such as this,
                 // but should not be done in a control loop.
@@ -443,7 +460,7 @@ void Robot::torque_to_continue(double torque, Axis axis) {
 }
 
 bool Robot::torque_to_continue(double torque, Axis axis, double time_out) {
-
+    updateRobotStateFlag_ = true;
     auto s = robot.readOnce();
 
     Eigen::Vector3d start_force;
@@ -452,6 +469,7 @@ bool Robot::torque_to_continue(double torque, Axis axis, double time_out) {
     robot.read(
             [&](
                     const franka::RobotState &robot_state) {
+                        state_ = robot_state;
                 counter++;
 //                std::cout << Pose(robot_state.O_T_EE).orientation.quaternion.toRotationMatrix() << std::endl<<std::endl;
                 // Printing to std::cout adds a delay. This is acceptable for a read loop such as this,
@@ -482,5 +500,5 @@ void Robot::absolute_cart_motion(double x, double y, double z, double max_time,
 
 void Robot::joint_motion(std::array<double, 7> q_goal, double speed_factor) {
     MotionGenerator motion_generator(speed_factor, q_goal);
-    robot.control(motion_generator);
+    robot.control(motion_generator); 
 }

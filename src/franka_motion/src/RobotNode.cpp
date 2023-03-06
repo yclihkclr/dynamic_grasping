@@ -32,12 +32,12 @@ int main(int argc, char** argv) {
 
 
     // Set spin rate
-    rclcpp::Rate rate(100);
+    rclcpp::Rate rate(50);
     while (rclcpp::ok())
     {
-        // my_controller->publishJointStates();
+        if(!server->publishRobotStates()){return 0;}
         rate.sleep();
     }
-    // rclcpp::shutdown();
+    rclcpp::shutdown();
 }
 

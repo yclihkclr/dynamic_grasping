@@ -21,6 +21,7 @@
 
 namespace orl {
     /**
+     * 
      * Wrapper around franka::Robot with more high_level functionality.
      *
      * Use orl::Robot::get_franka_robot() to access the low-level functionality of franka::Robot
@@ -285,6 +286,12 @@ namespace orl {
          */
         bool recoverFromErrors();
 
+
+        franka::RobotState state_;
+
+        void updateRobotState();
+
+        bool updateRobotStateFlag_;
     private:
         /**
          * franka::Robot instance

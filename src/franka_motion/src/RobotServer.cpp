@@ -25,7 +25,7 @@ RobotServer::RobotServer(std::shared_ptr<rclcpp::Node> node, bool use_franka_han
     robot_ = std::make_shared<orl::Robot>(franka_fci_ip,use_franka_hand);
 
     // init pose
-    controlGripper(false,0.03)
+    if(use_franka_hand){controlGripper(false,0.03);}
     std::array<double, 7> q_goal = {{0.058432293025024944, -0.7970709721832945, -0.19613238666559518, -2.7730435522313703, -0.14883224842143097, 2.034597985161675, 0.7228324700781736}};
     robot_->joint_motion(q_goal, 0.2); 
 }

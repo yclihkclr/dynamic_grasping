@@ -1,5 +1,9 @@
 # dynamic_grasping
-REMEMBER TO Source ros2.sh file before running these code
+under ~/dynamic_grasping
+
+    source ros2.bash
+
+REMEMBER TO Source ros2.bash file before running these code
 
 1. run robot_server
 ros2 run franka_motion RobotNode --ros-args -p hand:=false

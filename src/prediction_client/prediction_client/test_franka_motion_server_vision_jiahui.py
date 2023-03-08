@@ -9,6 +9,7 @@ import rclpy
 from rclpy.node import Node
 import transform
 from srt_serial import PythonSerialDriver
+from relay_control import RelaySerialDriver
 
 import random
 from utils.torch_utils import select_device, load_classifier, time_sync
@@ -199,13 +200,19 @@ class YoloV5:
 
 class PredictionClientAsync(Node):
 
-    def __init__(self):
+    def __init__(self, gripper_type):
         super().__init__('prediction_client_async')
-        self.hand_eye= [[-0.00818685,  0.991227, -0.131914, 0.621423],
+        self.hand_eye= [[-0.00818685,  0.991227, -0.131914, 0.610423],
                        [0.999931, 0.00699775, -0.0094753 ,  -0.0256352],
                        [-0.00846908 ,  -0.131982,  -0.991216,  0.591267],
                        [ 0.        ,  0.        ,  0.        ,  1.        ]]
-        self.srt = PythonSerialDriver("/dev/ttyUSB0")
+        self.gripper_type = gripper_type  # 0:franka_hand, 1:srt_box, 2:relay_control
+        if self.gripper_type == 0:
+            self.get_logger().info('Franka hand is working')
+        elif self.gripper_type == 1:
+            self.srt = PythonSerialDriver("/dev/ttyUSB0")
+        elif self.gripper_type == 2:
+            self.relay = RelaySerialDriver("/dev/ttyUSB0")
 
         self.model = YoloV5(yolov5_yaml_path='src/prediction_client/prediction_client/yolov5_detect/config/yolov5s.yaml')
 
@@ -224,7 +231,8 @@ class PredictionClientAsync(Node):
         self.frankaHand_cli = self.create_client(FrankaHand, '/franka_motion/franka_hand')
         while not self.frankaHand_cli.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('service not available, waiting again...')
-
+        
+        self.eef_z_offset_ = -0.02
     #     self.robotState_sub = self.create_subscription(RobotState,'/franka_motion/robot_states',self.robotState_cb,10)
     
     # def robotState_cb(self,msg):
@@ -239,29 +247,35 @@ class PredictionClientAsync(Node):
     def zero_srt(self, pressure = 0):
         self.srt.move3Fingers(True, pressure)
 
-    def close_gripper(self,is_franka_hand=False):
-        if is_franka_hand:
+    def close_gripper(self):
+        if self.gripper_type == 0:
             response_gripper = self.gripper_request(False)
             self.get_logger().info(
             'Result for control franka hand executed with status %d' %
             (response_gripper.success))
-        else:
+        elif self.gripper_type == 1:
             self.pos_srt()
             self.get_logger().info(
             'srt positve pressure to close gripper')
+        elif self.gripper_type == 2:
+            self.relay.close()
+            self.get_logger().info(
+            'relay off to close gripper')
 
-    def open_gripper(self,is_franka_hand=False):
-        if is_franka_hand:
+    def open_gripper(self):
+        if self.gripper_type == 0:
             response_gripper = self.gripper_request(True, 0.03)
             self.get_logger().info(
             'Result for control franka hand executed with status %d' %
             (response_gripper.success))
-        else:
+        elif self.gripper_type == 1:
             self.neg_srt()
             self.get_logger().info(
             'srt negtive pressure to open gripper')
-            # time.sleep(0.2)
-            # self.pos_srt(0)
+        elif self.gripper_type == 2:
+            self.relay.open()
+            self.get_logger().info(
+            'relay on to close gripper')
 
     def move_to_joints(self,joints,velscale):
         response_joint = self.send_joint_request(joints, velscale)
@@ -361,6 +375,7 @@ class PredictionClientAsync(Node):
         bTe = np.dot(bTo,np.linalg.inv(eTg))
         xyz = transform.translation_from_matrix(bTe)
         rpy = transform.euler_from_matrix(bTe)
+        xyz[2]+=self.eef_z_offset_
         return [xyz[0],xyz[1],xyz[2],rpy[0],rpy[1],rpy[2]]
 
     def gripper_request(self,enable,target_width=0.08,speed=0.5,force=0.2,epsilon_inner=0.005,epsilon_outer=0.1):
@@ -407,12 +422,12 @@ class PredictionClientAsync(Node):
 
 from box_corners import *
 
-def pick_or_pack_execution(input_location, prediction_client):
+def pick_or_pack_execution(input_location, prediction_client, gripper_switch):
     target_pose = [input_location[0], input_location[1], input_location[2], 3.1415926, 0.0, 0.0]
     # target_pose = [0.512888, -0.024801, 0.170688, 3.1415926, 0.0, 0.0]
     target_pose = prediction_client.soft_gripper_eef_transform(target_pose)
     print("target_pose is:", target_pose)
-    duration1 = 7.0 #unit:sec
+    duration1 = 5.0 #unit:sec
 
 
     # place path
@@ -443,6 +458,10 @@ def pick_or_pack_execution(input_location, prediction_client):
 
     #place point
     prediction_client.cart_pose_time(target_pose, duration1)
+    if(gripper_switch):
+        prediction_client.close_gripper()
+    else:
+        prediction_client.open_gripper()
 
     #safe out
     prediction_client.cart_path_time(poses_out,duration2)
@@ -459,7 +478,8 @@ def pick_or_pack_execution(input_location, prediction_client):
 def main(args=None):
     rclpy.init(args=args)
 
-    prediction_client = PredictionClientAsync()
+    gripper_type = 2
+    prediction_client = PredictionClientAsync(gripper_type)
 
     prediction_client.open_gripper()
 
@@ -497,11 +517,13 @@ def main(args=None):
     prediction_client.move_to_joints(init_joint,velscale)'''
 
     
-    pick_or_pack_execution(base_xyz, prediction_client=prediction_client)
+    pick_or_pack_execution(base_xyz, prediction_client=prediction_client,gripper_switch=True)
+
     place_loc = [0,0,0]
     obj_size=[8,8,7]
     end_point_loc = [place_loc[0]+obj_size[0]/2.0,place_loc[1]+obj_size[1]/2,obj_size[2]]
-    pick_or_pack_execution(get_relative_point_base_location(end_point_loc[0],end_point_loc[1],end_point_loc[2],'pack'), prediction_client=prediction_client)
+    pick_or_pack_execution(get_relative_point_base_location(end_point_loc[0],end_point_loc[1],end_point_loc[2],'pack'), prediction_client=prediction_client,gripper_switch=False)
+    prediction_client.open_gripper()
     prediction_client.move_to_joints(init_joint,velscale)
 
     prediction_client.destroy_node()

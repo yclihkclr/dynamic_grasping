@@ -22,6 +22,7 @@ setup(
         'console_scripts': [
         'test_franka_motion_read_states = prediction_client.test_franka_motion_read_states:main',
         'test_franka_motion_server_vision = prediction_client.test_franka_motion_server_vision:main',
+        'test_franka_motion_server_vision_predict = prediction_client.test_franka_motion_server_vision_predict:main',
         ],
     },
 )

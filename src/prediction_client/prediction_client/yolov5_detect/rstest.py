@@ -27,8 +27,9 @@ import cv2
 
 pipeline = rs.pipeline()  # 定义流程pipeline
 config = rs.config()  # 定义配置config
-config.enable_stream(rs.stream.depth, 848, 480, rs.format.z16, 30)
-config.enable_stream(rs.stream.color, 848, 480, rs.format.bgr8, 30)
+# 848, 480
+config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
+config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
 profile = pipeline.start(config)  # 流程开始
 align_to = rs.stream.color  # 与color流对齐
 align = rs.align(align_to)
@@ -198,7 +199,7 @@ if __name__ == '__main__':
     print("[INFO] YoloV5目标检测-程序启动")
     print("[INFO] 开始YoloV5模型加载")
     # YOLOV5模型配置文件(YAML格式)的路径 yolov5_yaml_path
-    model = YoloV5(yolov5_yaml_path='src/py_srvcli/py_srvcli/yolov5_detect/config/yolov5s.yaml')
+    model = YoloV5(yolov5_yaml_path='src/prediction_client/prediction_client/yolov5_detect/config/yolov5s.yaml')
     print("[INFO] 完成YoloV5模型加载")
 
     try:
@@ -215,11 +216,22 @@ if __name__ == '__main__':
             images = np.hstack((color_image, depth_colormap))
             
             # Show images
+            # [-0.007, -0.022, 0.41]
 
             t_start = time.time()  # 开始计时
             # YoloV5 目标检测
+            # canvas, class_id_list, xyxy_list, conf_list = model.detect(
+            #     color_image)
+            camera_crop_x_left = int(350)
+            camera_crop_x_right = int(1000)
+
+            camera_crop_y_top = int(100)
+            camera_crop_y_bottom = int(550)
+
             canvas, class_id_list, xyxy_list, conf_list = model.detect(
-                color_image)
+            color_image[camera_crop_y_top:camera_crop_y_bottom+1,camera_crop_x_left:camera_crop_x_right+1,:])
+
+            # print("color_image shape is",color_image.shape)
 
             t_end = time.time()  # 结束计时\
             #canvas = np.hstack((canvas, depth_colormap))
@@ -228,6 +240,10 @@ if __name__ == '__main__':
             camera_xyz_list=[]
             if xyxy_list:
                 for i in range(len(xyxy_list)):
+                    xyxy_list[i][0]+=camera_crop_x_left
+                    xyxy_list[i][2]+=camera_crop_x_left   
+                    xyxy_list[i][1]+=camera_crop_y_top
+                    xyxy_list[i][3]+=camera_crop_y_top  
                     ux = int((xyxy_list[i][0]+xyxy_list[i][2])/2)  # 计算像素坐标系的x
                     uy = int((xyxy_list[i][1]+xyxy_list[i][3])/2)  # 计算像素坐标系的y
                     dis = aligned_depth_frame.get_distance(ux, uy)
@@ -235,11 +251,15 @@ if __name__ == '__main__':
                         depth_intrin, (ux, uy), dis)  # 计算相机坐标系的xyz
                     camera_xyz = np.round(np.array(camera_xyz), 3)  # 转成3位小数
                     camera_xyz = camera_xyz.tolist()
-                    cv2.circle(canvas, (ux,uy), 4, (255, 255, 255), 5)#标出中心点
-                    cv2.putText(canvas, str(camera_xyz), (ux+20, uy+10), 0, 1,
+                    cv2.circle(canvas, (ux-camera_crop_x_left,uy-camera_crop_y_top), 4, (255, 255, 255), 5)#标出中心点
+                    print("canvas shape",canvas.shape)
+                    print("ux,uy",ux-camera_crop_x_left,uy-camera_crop_y_top)
+
+                    cv2.putText(canvas, str(camera_xyz), (ux-camera_crop_x_left-150,uy-camera_crop_y_top+80), 0, 1,
                                 [225, 255, 255], thickness=2, lineType=cv2.LINE_AA)#标出坐标
-                    camera_xyz_list.append(camera_xyz)
-            #print(camera_xyz_list)
+                    if camera_xyz[0] != 0.0 and camera_xyz[1] != 0.0 and camera_xyz[2] != 0.0:
+                        camera_xyz_list.append(camera_xyz)
+            print(camera_xyz_list)
 
             # 添加fps显示
             fps = int(1.0 / (t_end - t_start))

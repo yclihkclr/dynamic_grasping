@@ -68,7 +68,6 @@ def angle_function(dataset):
 
     return angle_num
 
-
 def model_select(pose_xy,interval):
   
     dataset_ = []
@@ -120,6 +119,7 @@ def motion_pred(pose_xy):
         for i in range(10):
             pose_xy = torch.unsqueeze(pose_xy, 0)
             pose_pred = model(pose_xy)
+            # print("length of pose:",len(pose_xy))
 
             pose_xy = torch.squeeze(pose_xy, 0)
             pose_xy=torch.cat((pose_xy[1:,:],pose_pred),axis=0)
@@ -140,11 +140,11 @@ def motion_pred(pose_xy):
 
 
 def detect_motion(angle):
-
-    if (abs(angle[1]-angle[14])>0.05):
-        model_path='src/prediction_client/prediction_client/motion_prediction/best_model_circular.pt'
-        print('detected circular motion')
-    else:
-        model_path='src/prediction_client/prediction_client/motion_prediction/best_model_linear.pt'
-        print('detected linear motion')
+    # print("angle is:",angle)
+    # if (abs(angle[1]-angle[9])>(math.pi/6)):
+    #     model_path='src/prediction_client/prediction_client/motion_prediction/best_model_circular.pt'
+    #     print('detected circular motion')
+    # else:
+    model_path='src/prediction_client/prediction_client/motion_prediction/best_model_linear.pt'
+    print('detected linear motion')
     return model_path

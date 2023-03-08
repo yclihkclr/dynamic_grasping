@@ -307,7 +307,7 @@ class PythonSerialDriver():
             return self.move3Fingers(False, 60)
  
 if __name__ == '__main__':
-    srt = PythonSerialDriver()
+    srt = PythonSerialDriver("/dev/ttyUSB0")
 
     while 1:
             # srt.move3Fingers(True, 60)

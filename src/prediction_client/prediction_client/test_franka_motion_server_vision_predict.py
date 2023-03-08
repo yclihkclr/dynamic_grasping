@@ -4,7 +4,6 @@ from franka_interfaces.srv import CartMotionTime
 from franka_interfaces.srv import JointMotionVel
 from franka_interfaces.srv import PosePath
 from franka_interfaces.srv import FrankaHand
-from franka_interfaces.msg import RobotState
 import rclpy
 from rclpy.node import Node
 import transform
@@ -29,6 +28,7 @@ import time
 import numpy as np
 import sys
 import cv2
+from prediction import motion_pred
 
 pipeline = rs.pipeline()  # 定义流程pipeline
 config = rs.config()  # 定义配置config
@@ -201,39 +201,35 @@ class PredictionClientAsync(Node):
 
     def __init__(self):
         super().__init__('prediction_client_async')
-        self.hand_eye= [[-0.00818685,  0.991227, -0.131914, 0.621423],
-                       [0.999931, 0.00699775, -0.0094753 ,  -0.0256352],
+        self.hand_eye= [[-0.00818685,  0.991227, -0.131914, 0.611423],
+                       [0.999931, 0.00699775, -0.0094753 ,  -0.0206352],
                        [-0.00846908 ,  -0.131982,  -0.991216,  0.591267],
                        [ 0.        ,  0.        ,  0.        ,  1.        ]]
-        self.srt = PythonSerialDriver("/dev/ttyUSB0")
+        
+        # self.srt = PythonSerialDriver()
 
         self.model = YoloV5(yolov5_yaml_path='src/prediction_client/prediction_client/yolov5_detect/config/yolov5s.yaml')
 
-        self.cart_cli = self.create_client(CartMotionTime, '/franka_motion/cart_motion_time')
-        while not self.cart_cli.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('service not available, waiting again...')
+        # self.cart_cli = self.create_client(CartMotionTime, '/franka_motion/cart_motion_time')
+        # while not self.cart_cli.wait_for_service(timeout_sec=1.0):
+        #     self.get_logger().info('service not available, waiting again...')
 
-        self.joint_cli = self.create_client(JointMotionVel, '/franka_motion/joint_motion_vel')
-        while not self.joint_cli.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('service not available, waiting again...')
+        # self.joint_cli = self.create_client(JointMotionVel, '/franka_motion/joint_motion_vel')
+        # while not self.joint_cli.wait_for_service(timeout_sec=1.0):
+        #     self.get_logger().info('service not available, waiting again...')
 
-        self.posePath_cli = self.create_client(PosePath, '/franka_motion/pose_path')
-        while not self.posePath_cli.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('service not available, waiting again...')
+        # self.posePath_cli = self.create_client(PosePath, '/franka_motion/pose_path')
+        # while not self.posePath_cli.wait_for_service(timeout_sec=1.0):
+        #     self.get_logger().info('service not available, waiting again...')
 
-        self.frankaHand_cli = self.create_client(FrankaHand, '/franka_motion/franka_hand')
-        while not self.frankaHand_cli.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('service not available, waiting again...')
-
-    #     self.robotState_sub = self.create_subscription(RobotState,'/franka_motion/robot_states',self.robotState_cb,10)
-    
-    # def robotState_cb(self,msg):
-    #     print(msg)
+        # self.frankaHand_cli = self.create_client(FrankaHand, '/franka_motion/franka_hand')
+        # while not self.frankaHand_cli.wait_for_service(timeout_sec=1.0):
+        #     self.get_logger().info('service not available, waiting again...')
 
     def pos_srt(self, pressure = 60):
         self.srt.move3Fingers(True, pressure)
 
-    def neg_srt(self, pressure = 20):
+    def neg_srt(self, pressure = 30):
         self.srt.move3Fingers(False, pressure)        
 
     def zero_srt(self, pressure = 0):
@@ -260,8 +256,6 @@ class PredictionClientAsync(Node):
             self.neg_srt()
             self.get_logger().info(
             'srt negtive pressure to open gripper')
-            # time.sleep(0.2)
-            # self.pos_srt(0)
 
     def move_to_joints(self,joints,velscale):
         response_joint = self.send_joint_request(joints, velscale)
@@ -280,6 +274,9 @@ class PredictionClientAsync(Node):
         self.get_logger().info(
         'Result for posePath executed with status %d' %
         (response_posePath.success))
+
+
+
 
     def detect_once(self,show_result = True):
     # Wait for a coherent pair of frames: depth and color
@@ -300,7 +297,7 @@ class PredictionClientAsync(Node):
         canvas, class_id_list, xyxy_list, conf_list = self.model.detect(
             color_image)
 
-        t_end = time.time()  # 结束计时\
+          # 结束计时\
         #canvas = np.hstack((canvas, depth_colormap))
         #print(class_id_list)
 
@@ -318,7 +315,7 @@ class PredictionClientAsync(Node):
                 cv2.putText(canvas, str(camera_xyz), (ux+20, uy+10), 0, 1,
                             [225, 255, 255], thickness=2, lineType=cv2.LINE_AA)#标出坐标
                 camera_xyz_list.append(camera_xyz)
-                print(camera_xyz_list)
+                # print("camera_xyz is:",camera_xyz_list)
                                 # 添加fps显示
                 if show_result:
                     fps = int(1.0 / (t_end - t_start))
@@ -331,7 +328,31 @@ class PredictionClientAsync(Node):
                     k = cv2.waitKey(0)
                     if k == 27:  # wait for ESC key to exit
                         cv2.destroyAllWindows()
+        t_end = time.time()
+        detT = t_end-t_start
+        # print("time spent:",detT)
         return camera_xyz_list
+    
+    def detect_for_predict(self,duration = 1.4):
+        camera_xyz=self.detect_once(False)
+        start_time = time.time()
+        current_time = time.time()
+        t_from_start=current_time-start_time
+        camera_xyt_list = []
+        camera_xyt_list.append([camera_xyz[0],t_from_start])
+        i = 1
+        while t_from_start<=duration:
+            camera_xyz=self.detect_once(False)
+            current_time = time.time()
+            t_from_start=current_time-start_time
+            if t_from_start>=i*0.1:
+               camera_xyt_list.append([camera_xyz[0],t_from_start])
+               i+=1
+
+        print('xyz in 1s:',camera_xyt_list)
+        print('numbers of point:',len(camera_xyt_list))
+
+        return camera_xyt_list
 
     def hand_eye_transform(self, camera_xyz):
         bTc = self.hand_eye
@@ -343,21 +364,6 @@ class PredictionClientAsync(Node):
         bTo = np.dot(bTc,cTo)
         xyz = transform.translation_from_matrix(bTo)
         return xyz
-
-    def soft_gripper_eef_transform(self,base_xyzrpy):
-        bTo =transform.euler_matrix(base_xyzrpy[3],base_xyzrpy[4],base_xyzrpy[5])
-        bTo[0,3]=base_xyzrpy[0]
-        bTo[1,3]=base_xyzrpy[1]
-        bTo[2,3]=base_xyzrpy[2]
-        eTg = [[math.cos(math.pi/12),  -math.sin(math.pi/12), 0, 0],
-               [math.sin(math.pi/12),   math.cos(math.pi/12),  0 ,  0],
-               [0 ,  0,  1.,                                0.02],
-               [ 0.  ,  0.  ,  0.  ,  1.   ]]
-        
-        bTe = np.dot(bTo,np.linalg.inv(eTg))
-        xyz = transform.translation_from_matrix(bTe)
-        rpy = transform.euler_from_matrix(bTe)
-        return [xyz[0],xyz[1],xyz[2],rpy[0],rpy[1],rpy[2]]
 
     def gripper_request(self,enable,target_width=0.08,speed=0.5,force=0.2,epsilon_inner=0.005,epsilon_outer=0.1):
         req = FrankaHand.Request()
@@ -401,36 +407,48 @@ class PredictionClientAsync(Node):
     def pose_offset(self,pose,x_offset,y_offset,z_offset):
         return [pose[0]+x_offset, pose[1]+y_offset, pose[2]+z_offset]
 
+
 def main(args=None):
     rclpy.init(args=args)
 
     prediction_client = PredictionClientAsync()
 
-    prediction_client.open_gripper()
+    # prediction_client.open_gripper()
     
-    init_joint = [0.16312787685894567, -0.9984653897620572, -0.13817682679145038, -2.6634519014816442, -0.1601847994128863, 1.7038212698830497, 0.6833146796069212]
-    velscale = 0.3
-    prediction_client.move_to_joints(init_joint,velscale)
-    time.sleep(0.1)
-    pre_pick_joint = [0.13821194475575496, -0.4434162515090197, -0.12757366092581499, -2.4691517728457257, -0.09563205587863921, 2.0746510965419294, 0.6008980268862696]
-    prediction_client.move_to_joints(pre_pick_joint,velscale)
-    
-    camera_xyz_list = prediction_client.detect_once()
-    while len(camera_xyz_list) <1:
-        camera_xyz_list = prediction_client.detect_once()
+    camera_xyz_list = prediction_client.detect_once(False)
+
+    # while len(camera_xyz_list) <1:
+    #     camera_xyz_list = prediction_client.detect_for_predict()
+
+    #     pose_xy=np.array(camera_xyz_list)
+    #     pose_pred=motion_pred(pose_xy)
+        
+    detect_duration = 1.4
+    camera_xyt_list = prediction_client.detect_for_predict(detect_duration)
+
+    xy_list = []
+    for camera_xyt in camera_xyt_list:
+        xy_list.append([camera_xyt[0][0],camera_xyt[0][1]])
+    pose_xy = np.array(xy_list)
+    print("pose_xy is:",pose_xy)
+
+    pose_pred,t_last=motion_pred(pose_xy)
+    print("pose_pred is:",pose_pred)
+    print("time for prediction is:",t_last)
+
     base_xyz = prediction_client.hand_eye_transform(camera_xyz_list[0])
     print("base_xyz is ",base_xyz)
 
-    target_pose = [base_xyz[0], base_xyz[1], base_xyz[2], 3.1415926, 0.0, 0.0]
-    # target_pose = [0.512888, -0.024801, 0.170688, 3.1415926, 0.0, 0.0]
-    target_pose = prediction_client.soft_gripper_eef_transform(target_pose)
-    print("target_pose is:", target_pose)
-    duration1 = 1.0
-
-
+    pose1 = [base_xyz[0], base_xyz[1], base_xyz[2], 3.1415926, 0.0, 0.0]
+    # # pose1 = [0.512888, -0.024801, 0.130688, 0.009026, -0.000185, -0.009763]
+    # pose1 = [0.495613, -0.039523, 0.1372314, 3.09829, -0.00640984, 0.0291367]
+    duration1 = 3.0
+    joint1 = [0.06625625610839737, -0.516543949110693, -0.18081555820766249, -2.7310316540481128, -0.09787116237481434, 2.2255856248657646, 0.7259974131426877]
+    # joint1 = [0.06576316667978721, -0.33619443085737394, -0.1804275372450417, -2.6659560173770838, -0.015912948752442996, 2.3126263302689836, 0.6636788695500128]
+    velscale1 = 0.6
 
     poses = []
-    pose_a = prediction_client.pose_offset(target_pose,0,0,0.2)
+    pose_a = prediction_client.pose_offset(pose1,0,0,0.2)
     prediction_client.add_waypoint_to_path(poses,pose_a)
 
     pose_b = prediction_client.pose_offset(pose_a,-0.2,-0.2,0)
@@ -442,20 +460,20 @@ def main(args=None):
     pose_d = prediction_client.pose_offset(pose_a,-0.4,-0.4,0.02)
     prediction_client.add_waypoint_to_path(poses,pose_d)
 
-    print(poses)
-    duration2 = 4.0
+    # print(poses)
+    duration2 = 8.0
 
+    # prediction_client.move_to_joints(joint1,velscale1)
 
-
-    prediction_client.cart_pose_time(target_pose,duration1)
+    # prediction_client.cart_pose_time(pose1,duration1)
     
-    prediction_client.close_gripper()
+    # prediction_client.close_gripper()
 
-    prediction_client.cart_path_time(poses,duration2)
+    # prediction_client.cart_path_time(poses,duration2)
 
-    prediction_client.open_gripper()
+    # prediction_client.open_gripper()
 
-    prediction_client.move_to_joints(pre_pick_joint,velscale)
+    # prediction_client.move_to_joints(joint1,velscale1)
 
 
     prediction_client.destroy_node()

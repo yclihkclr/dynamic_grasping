@@ -28,7 +28,7 @@ void Robot::cart_motion(const Pose &dest, const double max_time, const boost::op
     apply_speed_profile(pose_generator);
     updateRobotStateFlag_ = false;
     move_cartesian(pose_generator, max_time, stop_condition);
-    updateRobotStateFlag_ = true;
+    // updateRobotStateFlag_ = true;
 }
 
 

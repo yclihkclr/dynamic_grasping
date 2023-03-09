@@ -31,11 +31,25 @@ import numpy as np
 import sys
 import cv2
 
+json_path = 'src/prediction_client/prediction_client/HighResHighAccuracyPreset.json'
 pipeline = rs.pipeline()  # 定义流程pipeline
 config = rs.config()  # 定义配置config
-config.enable_stream(rs.stream.depth, 848, 480, rs.format.z16, 30)
-config.enable_stream(rs.stream.color, 848, 480, rs.format.bgr8, 30)
+
+# Get device product line for setting a supporting resolution
+pipeline_wrapper = rs.pipeline_wrapper(pipeline)
+pipeline_profile = config.resolve(pipeline_wrapper)
+device = pipeline_profile.get_device()
+advanced_mode = rs.rs400_advanced_mode(device)
+with open(json_path, 'r') as file:
+    json = file.read().strip()
+    advanced_mode.load_json(json)
+
+device_product_line = str(device.get_info(rs.camera_info.product_line))
+
+config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
+config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
 profile = pipeline.start(config)  # 流程开始
+
 align_to = rs.stream.color  # 与color流对齐
 align = rs.align(align_to)
 
@@ -62,9 +76,9 @@ def get_aligned_images():
     #######################################################
 
     depth_image = np.asanyarray(aligned_depth_frame.get_data())  # 深度图（默认16位）
-    depth_image_8bit = cv2.convertScaleAbs(depth_image, alpha=0.03)  # 深度图（8位）
-    depth_image_3d = np.dstack(
-        (depth_image_8bit, depth_image_8bit, depth_image_8bit))  # 3通道深度图
+    # depth_image_8bit = cv2.convertScaleAbs(depth_image, alpha=0.03)  # 深度图（8位）
+    # depth_image_3d = np.dstack(
+    #     (depth_image_8bit, depth_image_8bit, depth_image_8bit))  # 3通道深度图
     color_image = np.asanyarray(color_frame.get_data())  # RGB图
 
     # 返回相机内参、深度参数、彩色图、深度图、齐帧中的depth帧
@@ -529,6 +543,30 @@ def main(args=None):
     prediction_client.destroy_node()
     rclpy.shutdown()
 
+def realsense_collect_data():
+    save_num_counter = 0
+    while True:
+        intr, depth_intrin, color_image, depth_image, aligned_depth_frame = get_aligned_images()  # 获取对齐的图像与相机内参
+        while not depth_image.any() or not color_image.any():
+            intr, depth_intrin, color_image, depth_image, aligned_depth_frame = get_aligned_images()    
+        # Render images:
+        depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
+        images = np.hstack((color_image, depth_colormap))
+        cv2.namedWindow('Align Example', cv2.WINDOW_NORMAL)
+        cv2.imshow('Align Example', images)
+        key = cv2.waitKey(1)
+        # Press esc or 'q' to close the image window
+        if key & 0xFF == ord('q') or key == 27:
+            cv2.destroyAllWindows()
+            break
+        elif key & 0xFF == ord('s'):
+            save_num_counter += 1
+            cv2.imwrite('src/prediction_client/prediction_client/collected_data/place_planning/depth_image_' + str(save_num_counter)+'.png', depth_image)
+            cv2.imwrite('src/prediction_client/prediction_client/collected_data/place_planning/color_image_' + str(save_num_counter)+'.png', color_image)
+            depth_profile = rs.video_stream_profile(profile.get_stream(rs.stream.depth))
+            depth_intrinsics = depth_profile.get_intrinsics()
+            print(depth_intrinsics)
 
 if __name__ == '__main__':
-    main()
+    # main()
+    realsense_collect_data()
